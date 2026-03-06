@@ -21,12 +21,7 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 stats = {"orders": 0, "income": 0, "expenses": 0, "distance": 0.0, "lat": 53.195, "lon": 50.100, "last_order": 0}
-zones = {
-    "Центр": {"lat": 53.195, "lon": 50.100, "orders": 0},
-    "Аврора": {"lat": 53.210, "lon": 50.120, "orders": 0},
-    "Московское шоссе": {"lat": 53.180, "lon": 50.090, "orders": 0},
-    "Южный": {"lat": 53.170, "lon": 50.150, "orders": 0}
-}
+zones = {"Центр": 0, "Аврора": 0, "Московское": 0, "Южный": 0}
 
 class Location(BaseModel):
     lat: float
@@ -35,16 +30,13 @@ class Location(BaseModel):
 # --- МАТЕМАТИКА ---
 def calc_dist(lat1, lon1, lat2, lon2):
     R = 6371.0
-    dLat = math.radians(lat2 - lat1)
-    dLon = math.radians(lon2 - lon1)
-    # Формула гаверсинуса для расчета расстояния
+    dLat, dLon = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
     a = math.sin(dLat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon / 2)**2
     return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
 
-# --- API СЕРВЕРА ---
+# --- API ---
 @app.get("/")
-async def home():
-    return {"status": "online", "owner": "RENATKO", "message": "BMW M5 F90 is on the map!"}
+async def home(): return {"status": "online", "service": "DELIVERY LIVE"}
 
 @app.get("/stats")
 def get_stats(): return stats
@@ -59,10 +51,10 @@ def update_location(loc: Location):
 
 @app.get("/best_zone")
 def best_zone():
-    best = max(zones.keys(), key=lambda z: zones[z]["orders"])
-    return {"zone": best}
+    zone = max(zones, key=zones.get)
+    return {"zone": zone}
 
-# --- ЛОГИКА БОТА ---
+# --- БОТ ---
 class Form(StatesGroup):
     waiting_for_order_price = State()
     waiting_for_expense_price = State()
@@ -74,43 +66,36 @@ menu_kb = ReplyKeyboardMarkup(
     ], resize_keyboard=True
 )
 
+# ПРИОРИТЕТНЫЙ ОБРАБОТЧИК КНОПОК
+@dp.message(F.text.in_({"📊 Статистика", "🔄 Новая смена", "📦 Добавить заказ", "💧 Добавить расход"}))
+async def handle_menu(msg: types.Message, state: FSMContext):
+    await state.clear() # Мгновенно забываем про ожидание цифр
+    if msg.text == "📊 Статистика":
+        pure = stats["income"] - stats["expenses"]
+        await msg.answer(f"📊 <b>Статистика:</b>\n📦 Заказов: {stats['orders']}\n📏 Км: {round(stats['distance'], 2)}\n💰 Доход: {stats['income']} ₽\n💵 Чистыми: {pure} ₽", parse_mode="HTML")
+    elif msg.text == "🔄 Новая смена":
+        for k in stats: stats[k] = 0.0 if isinstance(stats[k], float) else 0
+        stats["lat"], stats["lon"] = 53.195, 50.100
+        await msg.answer("✅ Смена обнулена! Удачи, Ренат! 🚀")
+    elif msg.text == "📦 Добавить заказ":
+        await msg.answer("Введите сумму заказа:")
+        await state.set_state(Form.waiting_for_order_price)
+    elif msg.text == "💧 Добавить расход":
+        await msg.answer("Введите сумму расхода:")
+        await state.set_state(Form.waiting_for_expense_price)
+
 @dp.message(Command("start"))
 async def start(msg: types.Message, state: FSMContext):
     await state.clear()
-    await msg.answer("🚗 Панель управления стримом Самары активна!", reply_markup=menu_kb)
-
-# Сброс состояния, если нажата любая кнопка вместо ввода цифр
-@dp.message(F.text.in_({"📊 Статистика", "🔄 Новая смена", "📦 Добавить заказ", "💧 Добавить расход"}))
-async def menu_interruption(msg: types.Message, state: FSMContext):
-    await state.clear()
-    if msg.text == "📊 Статистика":
-        await show_stats(msg, state)
-    elif msg.text == "🔄 Новая смена":
-        await reset_shift(msg, state)
-    elif msg.text == "📦 Добавить заказ":
-        await add_order(msg, state)
-    elif msg.text == "💧 Добавить расход":
-        await add_exp(msg, state)
-
-@dp.message(F.text == "📦 Добавить заказ")
-async def add_order(msg: types.Message, state: FSMContext):
-    await msg.answer("Введите сумму заказа (только цифры):")
-    await state.set_state(Form.waiting_for_order_price)
+    await msg.answer("🚗 Панель DELIVERY LIVE активна!", reply_markup=menu_kb)
 
 @dp.message(Form.waiting_for_order_price, F.text.isdigit())
 async def proc_order(msg: types.Message, state: FSMContext):
     price = int(msg.text)
     stats["orders"] += 1
     stats["income"] += price
-    stats["last_order"] = price
-    zones[random.choice(list(zones.keys()))]["orders"] += 1
     await msg.answer(f"✅ Заказ на {price} ₽ добавлен!")
     await state.clear()
-
-@dp.message(F.text == "💧 Добавить расход")
-async def add_exp(msg: types.Message, state: FSMContext):
-    await msg.answer("Введите сумму расхода (только цифры):")
-    await state.set_state(Form.waiting_for_expense_price)
 
 @dp.message(Form.waiting_for_expense_price, F.text.isdigit())
 async def proc_exp(msg: types.Message, state: FSMContext):
@@ -118,31 +103,12 @@ async def proc_exp(msg: types.Message, state: FSMContext):
     await msg.answer(f"💸 Расход {msg.text} ₽ учтен!")
     await state.clear()
 
-@dp.message(F.text == "📊 Статистика")
-async def show_stats(msg: types.Message, state: FSMContext):
-    await state.clear()
-    pure = stats["income"] - stats["expenses"]
-    await msg.answer(
-        f"📊 <b>Статистика:</b>\n📦 Заказов: <b>{stats['orders']}</b>\n"
-        f"📏 Пройдено: <b>{round(stats['distance'], 2)} км</b>\n💰 Доход: <b>{stats['income']} ₽</b>\n"
-        f"💵 ЧИСТЫМИ: <b>{pure} ₽</b>", parse_mode="HTML"
-    )
-
-@dp.message(F.text == "🔄 Новая смена")
-async def reset_shift(msg: types.Message, state: FSMContext):
-    await state.clear()
-    stats["orders"] = stats["income"] = stats["expenses"] = stats["distance"] = stats["last_order"] = 0
-    for z in zones: zones[z]["orders"] = 0
-    await msg.answer("✅ Смена обнулена! Удачи на дорогах Самары! 🚀")
-
 @dp.message(Form.waiting_for_order_price)
 @dp.message(Form.waiting_for_expense_price)
 async def failed_digits(msg: types.Message):
-    await msg.answer("❌ Нужно ввести число. Попробуй еще раз или нажми другую кнопку.")
+    await msg.answer("❌ Введи число цифрами или выбери действие в меню.")
 
-# --- ЗАПУСК ---
 @app.on_event("startup")
-async def on_startup():
-    asyncio.create_task(dp.start_polling(bot))
+async def on_startup(): asyncio.create_task(dp.start_polling(bot))
 
 app.mount("/", StaticFiles(directory=".", html=True), name="static")
