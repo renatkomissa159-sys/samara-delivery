@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Courier GPS Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+body{margin:0;background:#111;color:#fff;font-family:Arial;text-align:center}
+h1{margin:20px 0}
+#map{height:70vh;width:92%;margin:10px auto;border-radius:10px}
+button{background:#ffcc00;border:none;padding:14px 36px;font-size:20px;border-radius:10px;cursor:pointer}
+.stats{margin-top:10px;font-size:18px}
+#log{margin-top:8px;font-size:14px;color:#9ad}
+</style>
+</head>
+
+<body>
+<h1>📍 Courier GPS Tracker</h1>
+
+<button id="startBtn">START GPS</button>
+
+<div class="stats">
+🚗 Скорость: <span id="speed">0</span> км/ч<br>
+📏 Км: <span id="km">0</span>
+</div>
+
+<div id="log">статус: ожидание…</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const log = (t)=>document.getElementById('log').innerText = 'статус: ' + t;
+
+let map = L.map('map').setView([53.1959,50.1008],13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+
+let marker=null;
+let route=[];
+let polyline=L.polyline([], {color:'yellow',weight:5}).addTo(map);
+
+let lastPos=null;
+let totalDistance=0;
+
+function dist(lat1,lon1,lat2,lon2){
+    let R=6371;
+    let dLat=(lat2-lat1)*Math.PI/180;
+    let dLon=(lon2-lon1)*Math.PI/180;
+    let a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+    return R*(2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)));
+}
+
+document.getElementById("startBtn").onclick=function(){
+
+    if(!navigator.geolocation){
+        log("геолокация не поддерживается");
+        return;
+    }
+
+    log("запрос геолокации…");
+
+    navigator.geolocation.watchPosition(
+        function(pos){
+            let lat=pos.coords.latitude;
+            let lng=pos.coords.longitude;
+
+            log("GPS получен");
+
+            route.push([lat,lng]);
+            polyline.setLatLngs(route);
+
+            if(!marker){
+                marker=L.marker([lat,lng]).addTo(map);
+            }else{
+                marker.setLatLng([lat,lng]);
+            }
+
+            map.setView([lat,lng],16);
+
+            if(lastPos){
+                let d=dist(lastPos.lat,lastPos.lng,lat,lng);
+                totalDistance+=d;
+                document.getElementById("km").innerText=totalDistance.toFixed(2);
+            }
+
+            lastPos={lat,lng};
+
+            let speed=pos.coords.speed;
+            if(speed){
+                document.getElementById("speed").innerText=(speed*3.6).toFixed(1);
+            }
+
+            // Отправляем на сервер по относительному пути!
+            fetch("/location",{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({lat: lat, lon: lng})
+            }).catch(err => console.error("Ошибка отправки GPS:", err));
+
+        },
+        function(err){
+            log("ошибка GPS: "+err.message);
+        },
+        { enableHighAccuracy:true, maximumAge:0, timeout:10000 }
+    );
+}
+</script>
+</body>
+</html>
