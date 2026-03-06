@@ -3,45 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <title>RENATKO Delivery Overlay</title>
-
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
-
 <style>
-/* Темный фон для предпросмотра, в OBS можно поменять на transparent */
-body { margin:0; font-family:Arial; background:#1e1e1e; color:white; }
-
-#panel {
-    position:absolute; top:20px; left:20px; background:#1c1c1c; padding:14px 18px;
-    border-radius:14px; font-size:17px; line-height:1.5;
-    box-shadow:0 10px 25px rgba(0,0,0,0.6);
-    border: 2px solid #333;
-}
+body { margin:0; font-family:Arial; background:transparent; color:white; }
+#panel { position:absolute; top:20px; left:20px; background:#1c1c1c; padding:14px 18px; border-radius:14px; font-size:17px; line-height:1.5; box-shadow:0 10px 25px rgba(0,0,0,0.6); border: 2px solid #333; }
 #panel span { color:#ff2b2b; font-weight: bold; }
-
-#map {
-    position:absolute; bottom:20px; left:20px; width:460px; height:320px;
-    border-radius:16px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.7);
-    border: 3px solid #ff2b2b;
-}
-
-#zone {
-    position:absolute; top:20px; right:20px; background:#ff2b2b; color:white;
-    padding:10px 14px; border-radius:12px; font-weight:bold;
-    box-shadow: 0 0 15px rgba(255, 43, 43, 0.5);
-}
-
-#bot {
-    position:absolute; top:70px; right:20px; background:#2a2a2a; color:#fff;
-    padding:10px 14px; border-radius:12px; font-size:14px;
-    border: 1px solid #ff2b2b;
-}
+#map { position:absolute; bottom:20px; left:20px; width:460px; height:320px; border-radius:16px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.7); border: 3px solid #ff2b2b; }
+#zone { position:absolute; top:20px; right:20px; background:#ff2b2b; color:white; padding:10px 14px; border-radius:12px; font-weight:bold; box-shadow: 0 0 15px rgba(255, 43, 43, 0.5); }
+#bot { position:absolute; top:70px; right:20px; background:#2a2a2a; color:#fff; padding:10px 14px; border-radius:12px; font-size:14px; border: 1px solid #ff2b2b; }
 </style>
 </head>
-
 <body>
-
 <div id="panel">
     📦 Заказы: <span id="orders">0</span><br>
     💰 Доход: <span id="money">0</span> ₽<br>
@@ -49,102 +23,40 @@ body { margin:0; font-family:Arial; background:#1e1e1e; color:white; }
     📏 Км: <span id="km">0</span><br>
     📊 Ср. заказ: <span id="avg">0</span> ₽
 </div>
-
 <div id="zone">🔥 Кэф: <span id="coef">1.0</span></div>
-<div id="bot">🤖 Совет: <span id="bot-text">центр Самары сейчас активен</span></div>
-
+<div id="bot">🤖 Совет: <span id="bot-text">ждем данные...</span></div>
 <div id="map"></div>
-
 <script>
 let map = L.map('map').setView([53.1959, 50.1008], 12);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-// Иконка твоей BMW M5 F90
-let carIcon = L.icon({
-    iconUrl: 'bmw_m5_red.png', 
-    iconSize: [40, 80],
-    iconAnchor: [20, 40]
-});
-
-let marker;
+let carIcon = L.icon({ iconUrl: 'bmw_m5_red.png', iconSize: [40, 80], iconAnchor: [20, 40] });
+let marker, lastPos;
 let route = L.polyline([], {color: "#ff2b2b", weight: 5}).addTo(map);
-let lastPos;
 
 async function fetchServerData() {
     try {
-        let resStats = await fetch("http://localhost:8000/stats");
+        // Убрали localhost, теперь берем данные прямо с этого же сервера
+        let resStats = await fetch("/stats");
         let data = await resStats.json();
-        
-        let orders = data.orders || 0;
-        let money = data.income || 0;
-        // Берем километры напрямую с сервера
-        let km = data.distance || 0; 
-        
-        document.getElementById("orders").innerText = orders;
-        document.getElementById("money").innerText = money;
-        document.getElementById("km").innerText = km.toFixed(2);
-        document.getElementById("avg").innerText = orders ? Math.round(money / orders) : 0;
-
-        let lat = data.lat;
-        let lon = data.lon;
-
-        if (!lat || !lon) return; 
-
-        if(!marker) {
-            marker = L.marker([lat, lon], {icon: carIcon}).addTo(map);
-            map.setView([lat, lon], 15);
+        document.getElementById("orders").innerText = data.orders || 0;
+        document.getElementById("money").innerText = data.income || 0;
+        document.getElementById("km").innerText = (data.distance || 0).toFixed(2);
+        document.getElementById("avg").innerText = data.orders ? Math.round(data.income / data.orders) : 0;
+        if (data.lat && data.lon) {
+            if(!marker) {
+                marker = L.marker([data.lat, data.lon], {icon: carIcon}).addTo(map);
+                map.setView([data.lat, data.lon], 15);
+            }
+            marker.setLatLng([data.lat, data.lon]);
+            route.addLatLng([data.lat, data.lon]);
+            map.panTo([data.lat, data.lon]);
         }
-
-        marker.setLatLng([lat, lon]);
-        route.addLatLng([lat, lon]);
-
-        // Считаем только текущую скорость
-        if(lastPos && (lastPos.lat !== lat || lastPos.lon !== lon)) {
-            let R = 6371; 
-            let dLat = (lat - lastPos.lat) * Math.PI / 180;
-            let dLon = (lon - lastPos.lon) * Math.PI / 180;
-            let a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lastPos.lat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-            let d = R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))); 
-            
-            let calcSpeed = Math.round(d / (2 / 3600)); 
-            if (calcSpeed < 200) document.getElementById("speed").innerText = calcSpeed;
-        } else if (lastPos && lastPos.lat === lat && lastPos.lon === lon) {
-            document.getElementById("speed").innerText = 0;
-        }
-
-        lastPos = {lat: lat, lon: lon};
-
-        checkCoef(lat, lon);
-        map.panTo([lat, lon]);
-
-        let resZone = await fetch("http://localhost:8000/best_zone");
+        let resZone = await fetch("/best_zone");
         let zoneData = await resZone.json();
         if (zoneData.zone) document.getElementById("bot-text").innerText = "Лучшая зона: " + zoneData.zone;
-
-    } catch (err) {
-        console.error("Ожидание данных от сервера...", err);
-    }
+    } catch (err) { console.error("Ошибка обновления:", err); }
 }
-
-// Запрашиваем данные каждые 2 секунды
 setInterval(fetchServerData, 2000);
-
-function checkCoef(lat, lon) {
-    let coef = 1.0;
-    if(lat > 53.20 && lon > 50.10) coef = 1.8;
-    if(lat > 53.21 && lon > 50.14) coef = 2.0;
-    if(lat < 53.18 && lon > 50.11) coef = 1.6;
-    document.getElementById("coef").innerText = coef;
-}
-
-let heat = L.heatLayer([
-    [53.1959, 50.1008, 1],
-    [53.2050, 50.1200, 0.9],
-    [53.2100, 50.0900, 0.8],
-    [53.1850, 50.1100, 0.7],
-    [53.2000, 50.1400, 0.6]
-], {radius: 45}).addTo(map);
-
 </script>
 </body>
 </html>
